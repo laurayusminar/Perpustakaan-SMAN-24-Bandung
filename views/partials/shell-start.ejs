@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f0e9">
+  <title><%= title %> | Perpustakaan SMA Negeri 24 Bandung</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/admin/dashboard" aria-label="Beranda Perpustakaan">
+        <span class="brand-mark">24</span>
+        <span class="brand-copy"><strong>Ruang Baca</strong><small>SMA Negeri 24 Bandung</small></span>
+      </a>
+      <div class="nav-caption">MENU UTAMA</div>
+      <nav class="main-nav" aria-label="Navigasi utama">
+        <a class="nav-link <%= currentPath === '/admin/dashboard' ? 'is-active' : '' %>" href="/admin/dashboard"><span class="nav-symbol">01</span>Ringkasan</a>
+        <a class="nav-link <%= currentPath.startsWith('/admin/transactions') ? 'is-active' : '' %>" href="/admin/transactions"><span class="nav-symbol">02</span>Transaksi</a>
+      </nav>
+      <div class="nav-caption nav-caption-spaced">KOLEKSI & DATA</div>
+      <nav class="main-nav" aria-label="Data perpustakaan">
+        <a class="nav-link <%= currentPath.startsWith('/admin/data/buku') ? 'is-active' : '' %>" href="/admin/data/buku"><span class="nav-symbol">BK</span>Buku</a>
+        <a class="nav-link <%= currentPath.startsWith('/admin/data/kategori') ? 'is-active' : '' %>" href="/admin/data/kategori"><span class="nav-symbol">KT</span>Kategori</a>
+        <a class="nav-link <%= currentPath.startsWith('/admin/data/anggota') ? 'is-active' : '' %>" href="/admin/data/anggota"><span class="nav-symbol">AG</span>Anggota</a>
+        <a class="nav-link <%= currentPath.startsWith('/admin/data/petugas') ? 'is-active' : '' %>" href="/admin/data/petugas"><span class="nav-symbol">PT</span>Petugas</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="status-dot"></span><span>Sistem aktif</span>
+        <form action="/admin/logout" method="post">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="logout-button" type="submit" title="Keluar" aria-label="Keluar">Keluar <span aria-hidden="true">&#8594;</span></button>
+        </form>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb"><span>PERPUSTAKAAN</span><span class="breadcrumb-separator">/</span><strong><%= title.toUpperCase() %></strong></div>
+        <div class="user-chip"><span class="user-avatar"><%= (user.name || 'P').slice(0, 1).toUpperCase() %></span><span><strong><%= user.name %></strong><small>Petugas</small></span></div>
+      </header>
+      <main class="page-content">

@@ -1,0 +1,23 @@
+<%- include('partials/shell-start', { title }) %>
+<section class="page-heading dashboard-heading">
+  <div><div class="eyebrow"><span class="eyebrow-line"></span><%= new Intl.DateTimeFormat('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(`${today}T12:00:00`)).toUpperCase() %></div><h1>Ringkasan <em>perpustakaan.</em></h1><p>Pantau koleksi dan aktivitas layanan hari ini.</p></div>
+  <a class="button button-dark" href="/admin/transactions"><span class="button-plus">+</span> Catat transaksi</a>
+</section>
+<section class="stat-grid" aria-label="Statistik perpustakaan">
+  <article class="stat-card stat-card-primary"><div class="stat-top"><span>Total koleksi buku</span><span class="stat-index">01</span></div><strong><%= statistics.books %></strong><div class="stat-foot">Judul dalam katalog</div><span class="stat-decoration" aria-hidden="true">B</span></article>
+  <article class="stat-card"><div class="stat-top"><span>Kategori</span><span class="stat-index">02</span></div><strong><%= statistics.categories %></strong><div class="stat-foot">Kelompok koleksi</div><span class="stat-decoration stat-decoration-amber" aria-hidden="true">K</span></article>
+  <article class="stat-card"><div class="stat-top"><span>Anggota</span><span class="stat-index">03</span></div><strong><%= statistics.members %></strong><div class="stat-foot">Siswa terdaftar</div><span class="stat-decoration stat-decoration-coral" aria-hidden="true">A</span></article>
+  <article class="stat-card"><div class="stat-top"><span>Buku dipinjam</span><span class="stat-index">04</span></div><strong><%= statistics.activeLoans %></strong><div class="stat-foot">Unit belum kembali</div><span class="stat-decoration stat-decoration-blue" aria-hidden="true">P</span></article>
+</section>
+<section class="report-strip"><div class="report-title"><span class="report-mark">H</span><div><span>AKTIVITAS HARI INI</span><strong>Laporan harian</strong></div></div><div class="report-metric"><strong><%= statistics.loansToday %></strong><span>peminjaman</span></div><div class="report-divider"></div><div class="report-metric"><strong><%= statistics.returnsToday %></strong><span>pengembalian</span></div><a href="/admin/transactions" class="report-link" aria-label="Lihat transaksi">&#8599;</a></section>
+<section class="section-block">
+  <div class="section-heading"><div><div class="eyebrow">PEMANTAUAN</div><h2>Aktivitas peminjaman</h2></div><a class="text-link" href="/admin/transactions">Lihat semua <span aria-hidden="true">&#8594;</span></a></div>
+  <% if (recentLoans.length) { %>
+  <div class="table-wrap"><table><thead><tr><th>ANGGOTA</th><th>BUKU</th><th>TANGGAL PINJAM</th><th>JATUH TEMPO</th><th>SISA</th><th>STATUS</th></tr></thead><tbody>
+  <% recentLoans.forEach((loan) => { const overdue = loan.sisa_buku > 0 && loan.tanggal_jatuh_tempo < today; %>
+    <tr><td><strong><%= loan.nama_anggota %></strong></td><td><%= loan.judul_buku %></td><td><%= loan.tanggal_peminjaman %></td><td><%= loan.tanggal_jatuh_tempo %></td><td><%= loan.sisa_buku %> buku</td><td><span class="status-pill <%= overdue ? 'status-late' : loan.sisa_buku ? 'status-active' : 'status-done' %>"><%= overdue ? 'Terlambat' : loan.sisa_buku ? 'Dipinjam' : 'Selesai' %></span></td></tr>
+  <% }) %>
+  </tbody></table></div>
+  <% } else { %><div class="empty-state"><span class="empty-symbol">01</span><div><strong>Belum ada transaksi</strong><p>Transaksi peminjaman terbaru akan muncul di sini.</p></div><a href="/admin/transactions" class="text-link">Mulai mencatat &#8594;</a></div><% } %>
+</section>
+<%- include('partials/shell-end') %>

@@ -1,0 +1,7 @@
+<% if (user) { %>
+<%- include('partials/shell-start', { title }) %>
+<section class="error-page"><span class="error-code">!</span><div class="eyebrow">ADA KENDALA</div><h1><%= title %></h1><p><%= message %></p><a class="button button-dark" href="/admin/dashboard">Kembali ke ringkasan <span aria-hidden="true">&#8594;</span></a></section>
+<%- include('partials/shell-end') %>
+<% } else { %>
+<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title><%= title %></title><link rel="stylesheet" href="/css/style.css"></head><body class="login-page"><main class="standalone-error"><span class="error-code">!</span><h1><%= title %></h1><p><%= message %></p><a class="button button-dark" href="/">Kembali ke katalog <span aria-hidden="true">&#8594;</span></a></main></body></html>
+<% } %>

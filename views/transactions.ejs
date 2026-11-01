@@ -1,0 +1,40 @@
+<%- include('partials/shell-start', { title }) %>
+<section class="page-heading compact-heading">
+  <div><div class="eyebrow"><span class="eyebrow-line"></span>SIRKULASI KOLEKSI</div><h1>Transaksi<em>.</em></h1><p>Catat peminjaman, pengembalian, dan pantau batas waktu buku.</p></div>
+  <div class="due-note"><span class="due-note-mark">3</span><span><strong>3 hari</strong><small>batas peminjaman</small></span></div>
+</section>
+<% if (notice) { %><div class="alert alert-success" role="status"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" role="alert"><%= error %></div><% } %>
+<section class="transaction-layout">
+  <div class="transaction-main">
+    <div class="section-heading transaction-heading"><div><div class="eyebrow">CATATAN TERBARU</div><h2>Riwayat sirkulasi</h2></div><span class="record-count"><%= loans.length %> transaksi</span></div>
+    <div class="transaction-tools">
+      <form class="filter-form transaction-filter-form" action="/admin/transactions" method="get">
+        <label class="field filter-search"><span>Cari nama, NIS, atau buku</span><input type="search" name="q" value="<%= activeFilters.q || '' %>" placeholder="Ketik kata kunci"></label>
+        <label class="field"><span>Tanggal mulai</span><input type="date" name="mulai" value="<%= activeFilters.mulai || '' %>"></label>
+        <label class="field"><span>Tanggal selesai</span><input type="date" name="selesai" value="<%= activeFilters.selesai || '' %>"></label>
+        <label class="field"><span>Status transaksi</span><select name="status"><option value="">Semua status</option><option value="dipinjam" <%= activeFilters.status === 'dipinjam' ? 'selected' : '' %>>Dipinjam</option><option value="dikembalikan" <%= activeFilters.status === 'dikembalikan' ? 'selected' : '' %>>Dikembalikan</option><option value="terlambat" <%= activeFilters.status === 'terlambat' ? 'selected' : '' %>>Jatuh tempo / terlambat</option></select></label>
+        <button class="button button-dark filter-submit" type="submit">Terapkan</button>
+      </form>
+      <div class="filter-actions"><a class="button button-outline filter-reset" href="/admin/transactions">Reset</a><form class="export-form" action="/admin/transactions/export" method="get"><input type="hidden" name="q" value="<%= activeFilters.q || '' %>"><input type="hidden" name="mulai" value="<%= activeFilters.mulai || '' %>"><input type="hidden" name="selesai" value="<%= activeFilters.selesai || '' %>"><input type="hidden" name="status" value="<%= activeFilters.status || '' %>"><button class="button button-outline export-button" type="submit"><span aria-hidden="true">&#8595;</span> Export Excel</button></form></div>
+    </div>
+    <div class="table-wrap transaction-table-wrap"><table><thead><tr><th>ANGGOTA</th><th>BUKU</th><th>PINJAM / TEMPO</th><th>STATUS</th><th>DIKEMBALIKAN</th></tr></thead><tbody>
+      <% loans.forEach((loan) => { const overdue = loan.sisa_buku > 0 && loan.tanggal_jatuh_tempo < currentDate; %>
+      <tr><td><strong><%= loan.nama_anggota %></strong><small class="cell-sub"><%= loan.kelas %></small></td><td><span class="book-title-cell"><%= loan.judul_buku %></span><small class="cell-sub"><%= loan.jumlah_buku %> dipinjam</small></td><td><%= loan.tanggal_peminjaman %><small class="cell-sub">Tempo <%= loan.tanggal_jatuh_tempo %></small></td><td><span class="status-pill <%= overdue ? 'status-late' : loan.sisa_buku ? 'status-active' : 'status-done' %>"><%= overdue ? 'Terlambat' : loan.sisa_buku ? 'Dipinjam' : 'Selesai' %></span><small class="cell-sub"><%= loan.sisa_buku %> belum kembali</small></td><td>
+        <% if (loan.sisa_buku > 0) { %><form class="return-form" action="/admin/transactions/<%= loan.kode_peminjaman %>/return" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="sr-only" for="return-<%= loan.kode_peminjaman %>">Jumlah dikembalikan</label><input id="return-<%= loan.kode_peminjaman %>" type="number" name="jumlah_buku" min="1" max="<%= loan.sisa_buku %>" value="<%= loan.sisa_buku %>" required><button type="submit" title="Proses pengembalian">Kembali <span aria-hidden="true">&#8594;</span></button></form><% } else { %><span class="returned-label">Tuntas <span aria-hidden="true">&#10003;</span></span><% } %>
+      </td></tr><% }) %>
+      <% if (!loans.length) { %><tr><td colspan="5"><div class="table-empty">Belum ada transaksi peminjaman.</div></td></tr><% } %>
+    </tbody></table></div>
+  </div>
+  <aside class="borrow-panel"><div class="borrow-panel-head"><span class="borrow-icon">+</span><div><div class="eyebrow">TRANSAKSI BARU</div><h2>Peminjaman</h2></div></div><p class="panel-description">Pilih anggota dan buku. Batas aktif setiap anggota adalah 3 buku.</p>
+    <% if (!hasMembers || !hasBooks) { %><div class="inline-notice">Tambahkan anggota dan buku dengan stok tersedia sebelum mencatat peminjaman.</div><% } %>
+    <form class="form-stack borrow-form" action="/admin/transactions/borrow" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="field autocomplete-field" data-autocomplete="anggota"><label for="anggota-search">Anggota (nama / NIS)</label><input id="anggota-search" class="autocomplete-input" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="anggota-options" placeholder="Cari nama atau NIS..." required><input type="hidden" name="kode_anggota"><div id="anggota-options" class="autocomplete-results" role="listbox" hidden></div><small class="autocomplete-feedback" aria-live="polite"></small></div>
+      <div class="field autocomplete-field" data-autocomplete="buku"><label for="buku-search">Buku tersedia</label><input id="buku-search" class="autocomplete-input" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="buku-options" placeholder="Cari judul, kode, atau pengarang..." required><input type="hidden" name="kode_buku"><div id="buku-options" class="autocomplete-results" role="listbox" hidden></div><small class="autocomplete-feedback" aria-live="polite"></small></div>
+      <label class="field"><span>Jumlah buku</span><input type="number" name="jumlah_buku" min="1" max="3" value="1" required></label>
+      <div class="due-preview"><span>Tanggal pinjam</span><strong><%= currentDate %></strong><span>Jatuh tempo</span><strong><%= dueDate %></strong></div>
+      <button class="button button-primary button-wide" type="submit" <%= !hasMembers || !hasBooks ? 'disabled' : '' %>>Simpan peminjaman <span aria-hidden="true">&#8594;</span></button>
+    </form>
+  </aside>
+</section>
+<%- include('partials/shell-end') %>

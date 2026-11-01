@@ -1,0 +1,30 @@
+<%- include('partials/shell-start', { title }) %>
+<section class="page-heading compact-heading">
+  <div><div class="eyebrow"><span class="eyebrow-line"></span>PEMUTAKHIRAN TAHUN AJARAN</div><h1>Perbarui kelas<em>.</em></h1><p>Pindahkan anggota aktif dari satu kelas ke kelas baru tanpa menghapus identitas atau riwayat transaksinya.</p></div>
+  <a class="button button-outline" href="/admin/data/anggota"><span aria-hidden="true">&#8592;</span> Kembali ke anggota</a>
+</section>
+<% if (notice) { %><div class="alert alert-success" role="status"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" role="alert"><%= error %></div><% } %>
+<section class="bulk-class-layout">
+  <div class="bulk-class-panel">
+    <div class="section-heading"><div><div class="eyebrow">LANGKAH 1</div><h2>Pilih kelas asal</h2></div></div>
+    <form class="bulk-class-source" action="/admin/data/anggota/bulk-class" method="get">
+      <label class="field"><span>Kelas saat ini</span><select name="kelas_asal" required><option value="">Pilih kelas</option><% classes.forEach((className) => { %><option value="<%= className %>" <%= sourceClass === className ? 'selected' : '' %>><%= className %></option><% }) %></select></label>
+      <button class="button button-dark" type="submit">Tampilkan siswa <span aria-hidden="true">&#8594;</span></button>
+    </form>
+  </div>
+  <% if (sourceClass) { %>
+  <div class="bulk-class-panel bulk-class-preview">
+    <div class="section-heading"><div><div class="eyebrow">LANGKAH 2</div><h2><%= sourceClass %> <span class="preview-count"><%= members.length %> anggota aktif</span></h2></div></div>
+    <% if (members.length) { %>
+      <div class="table-wrap"><table><thead><tr><th>NIS</th><th>NAMA</th><th>KELAS</th><th>STATUS</th></tr></thead><tbody><% members.forEach((member) => { %><tr><td><%= member.nis || '-' %></td><td><strong><%= member.nama %></strong></td><td><%= member.kelas %></td><td><span class="member-status member-status-aktif"><%= member.status %></span></td></tr><% }) %></tbody></table></div>
+      <form class="bulk-class-target" action="/admin/data/anggota/bulk-class" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="kelas_asal" value="<%= sourceClass %>">
+        <label class="field"><span>Kelas tujuan untuk <%= members.length %> siswa</span><input type="text" name="kelas_tujuan" required maxlength="40" placeholder="Contoh: XII IPA 1"></label>
+        <p class="bulk-class-note">Hanya anggota berstatus Aktif di kelas asal yang diperbarui. Status dan seluruh riwayat peminjaman tetap tersimpan.</p>
+        <button class="button button-primary" type="submit" data-confirm="Pindahkan <%= members.length %> anggota aktif dari <%= sourceClass %> ke kelas tujuan?">Perbarui <%= members.length %> anggota <span aria-hidden="true">&#8594;</span></button>
+      </form>
+    <% } else { %><div class="empty-state"><span class="empty-symbol">00</span><div><strong>Tidak ada anggota aktif</strong><p>Kelas arsip ini tidak memiliki anggota aktif untuk dipindahkan.</p></div></div><% } %>
+  </div>
+  <% } %>
+</section>
+<%- include('partials/shell-end') %>

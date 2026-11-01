@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f0e9">
+  <title>Masuk | Perpustakaan SMA Negeri 24 Bandung</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="login-page">
+  <main class="login-layout">
+    <section class="login-aside">
+      <a class="brand brand-login" href="/"><span class="brand-mark">24</span><span class="brand-copy"><strong>Ruang Baca</strong><small>SMA Negeri 24 Bandung</small></span></a>
+      <div class="login-illustration" aria-hidden="true">
+        <div class="book-stack stack-back"></div><div class="book-stack stack-middle"></div><div class="book-stack stack-front"><span>RUANG<br>BACA</span></div>
+        <div class="illustration-stamp">BANDUNG<br><strong>24</strong></div>
+      </div>
+      <div class="aside-note"><span>01 / 04</span><p>Tempat pengetahuan<br>bertemu rasa ingin tahu.</p></div>
+    </section>
+    <section class="login-main">
+      <div class="login-form-wrap">
+        <div class="eyebrow"><span class="eyebrow-line"></span>PORTAL PETUGAS</div>
+        <h1>Selamat datang<br>kembali.</h1>
+        <p class="login-intro">Masuk untuk mengelola koleksi dan layanan perpustakaan.</p>
+        <% if (error) { %><div class="alert alert-error" role="alert"><%= error %></div><% } %>
+        <form class="form-stack login-form" action="/admin/login" method="post">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field"><span>Username atau email</span><input type="text" name="identity" autocomplete="username" placeholder="Masukkan username atau email" required autofocus></label>
+          <label class="field"><span>Kata sandi</span><input type="password" name="password" autocomplete="current-password" placeholder="Masukkan kata sandi" required></label>
+          <button class="button button-primary button-wide" type="submit">Masuk ke dashboard <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        <a class="login-catalog-link" href="/katalog"><span>Pengunjung perpustakaan?</span><strong>Cari buku di katalog <span aria-hidden="true">&#8594;</span></strong></a>
+        <div class="login-footnote"><span class="tiny-lock" aria-hidden="true">&#9679;</span> Akses khusus petugas perpustakaan</div>
+      </div>
+      <div class="login-bottom"><span>SISTEM INFORMASI PERPUSTAKAAN</span><span>SMAN 24 BANDUNG</span></div>
+    </section>
+  </main>
+</body>
+</html>

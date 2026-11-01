@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f0e9">
+  <meta name="description" content="Cari koleksi buku Perpustakaan SMA Negeri 24 Bandung.">
+  <title>Katalog Buku | Perpustakaan SMA Negeri 24 Bandung</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="catalog-page">
+  <header class="catalog-header">
+    <a class="brand catalog-brand" href="/katalog" aria-label="Katalog Perpustakaan SMA Negeri 24 Bandung">
+      <span class="brand-mark">24</span>
+      <span class="brand-copy"><strong>Ruang Baca</strong><small>SMA Negeri 24 Bandung</small></span>
+    </a>
+    <nav class="catalog-nav" aria-label="Navigasi pengunjung"><span class="catalog-nav-label">KATALOG PENGUNJUNG</span></nav>
+  </header>
+  <main class="catalog-main">
+    <section class="catalog-intro">
+      <div class="catalog-intro-copy">
+        <div class="eyebrow"><span class="eyebrow-line"></span>KOLEKSI PERPUSTAKAAN SEKOLAH</div>
+        <h1>Temukan bacaan<br>berikutnya<em>.</em></h1>
+        <p>Jelajahi koleksi buku Perpustakaan SMA Negeri 24 Bandung.</p>
+      </div>
+      <div class="catalog-count-mark" aria-hidden="true"><strong id="catalog-total-count"><%= books.length %></strong><span>JUDUL<br>DITAMPILKAN</span></div>
+    </section>
+
+    <section class="catalog-search-panel" aria-label="Cari dan filter buku">
+      <form class="catalog-search-form" action="/katalog" method="get" role="search">
+        <label class="catalog-search-field" for="catalog-search"><span class="catalog-search-icon" aria-hidden="true">&#9906;</span><input id="catalog-search" type="search" name="q" value="<%= search %>" placeholder="Cari judul, pengarang, atau ISBN..." autocomplete="off"><button type="button" class="catalog-clear" aria-label="Hapus pencarian" hidden>&#215;</button></label>
+        <label class="catalog-category-field" for="catalog-category"><span>KATEGORI</span><select id="catalog-category" name="kategori"><option value="">Semua kategori</option><% categories.forEach((category) => { %><option value="<%= category.kode_kategori %>" <%= String(categoryId) === String(category.kode_kategori) ? 'selected' : '' %>><%= category.nama_kategori %></option><% }) %></select></label>
+        <button class="button button-dark catalog-search-submit" type="submit">Cari buku <span aria-hidden="true">&#8594;</span></button>
+      </form>
+      <div class="catalog-search-meta"><span id="catalog-result-count"><%= books.length %> judul</span><span class="catalog-live-status" aria-live="polite">Hasil diperbarui saat Anda mencari</span></div>
+    </section>
+
+    <section class="catalog-results" aria-label="Daftar buku">
+      <div id="catalog-grid" class="catalog-grid">
+        <% books.forEach((book, index) => { %>
+          <article class="catalog-book" data-book-card>
+            <div class="book-cover book-cover-<%= index % 5 %>" role="img" aria-label="Ilustrasi sampul untuk <%= book.judul_buku %>">
+              <span class="cover-school">SMAN 24 BANDUNG</span><div class="cover-center"><span class="cover-initials"><%= book.judul_buku.trim().slice(0, 1).toUpperCase() %></span><span class="cover-rule"></span></div><span class="cover-label">KOLEKSI<br>PERPUSTAKAAN</span>
+            </div>
+            <div class="catalog-book-info">
+              <div class="book-card-top"><span class="book-category"><%= book.nama_kategori %></span><span class="book-year"><%= book.tahun_terbit || 'Tahun tidak dicatat' %></span></div>
+              <h2><%= book.judul_buku %></h2>
+              <p class="book-author"><%= book.pengarang || 'Pengarang tidak dicantumkan' %></p>
+              <dl class="book-details"><div><dt>Penerbit</dt><dd><%= book.penerbit || '-' %></dd></div><div><dt>ISBN</dt><dd><%= book.isbn || '-' %></dd></div></dl>
+              <div class="book-availability <%= book.jumlah_buku > 0 ? 'is-available' : 'is-unavailable' %>"><span class="availability-dot"></span><strong><%= book.jumlah_buku > 0 ? `Tersedia: ${book.jumlah_buku} eksemplar` : 'Tidak tersedia' %></strong></div>
+            </div>
+          </article>
+        <% }) %>
+      </div>
+      <div id="catalog-empty" class="catalog-empty" <%= books.length ? 'hidden' : '' %>><span class="empty-symbol">00</span><div><strong>Buku tidak ditemukan</strong><p>Coba kata kunci atau kategori lain.</p></div><a href="/katalog">Reset pencarian <span aria-hidden="true">&#8594;</span></a></div>
+      <p class="catalog-limit-note" id="catalog-limit-note" <%= books.length < 200 ? 'hidden' : '' %>>Menampilkan maksimal 200 hasil. Persempit pencarian untuk menemukan buku lainnya.</p>
+    </section>
+  </main>
+  <footer class="catalog-footer"><span>PERPUSTAKAAN SMA NEGERI 24 BANDUNG</span><span>Informasi stok dapat berubah mengikuti transaksi terbaru.</span></footer>
+  <script src="/js/public-catalog.js" defer></script>
+</body>
+</html>

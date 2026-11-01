@@ -1,0 +1,20 @@
+<%- include('partials/shell-start', { title }) %>
+<section class="page-heading compact-heading">
+  <div><div class="eyebrow"><span class="eyebrow-line"></span><a class="back-link" href="/admin/data/<%= config.table %>">DATA <%= config.title.toUpperCase() %></a> / FORM</div><h1><%= title %><em>.</em></h1><p>Lengkapi informasi pada formulir berikut.</p></div>
+  <a class="button button-outline" href="/admin/data/<%= config.table %>"><span aria-hidden="true">&#8592;</span> Kembali</a>
+</section>
+<% if (error) { %><div class="alert alert-error" role="alert"><%= error %></div><% } %>
+<section class="form-panel"><form class="form-stack data-form" action="/admin/data/<%= config.table %>/save" method="post">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if (record[config.key]) { %><input type="hidden" name="id" value="<%= record[config.key] %>"><% } %>
+  <% config.fields.forEach((field) => { const value = record[field.name] ?? field.default ?? ''; %>
+    <label class="field <%= field.type === 'textarea' ? 'field-full' : '' %>"><span><%= field.label %><% if (field.required && !(field.name === 'password' && record[config.key])) { %><i aria-hidden="true">*</i><% } %></span>
+      <% if (field.type === 'textarea') { %><textarea name="<%= field.name %>" rows="3" <%= field.required ? 'required' : '' %> placeholder="<%= field.placeholder || '' %>"><%= value %></textarea>
+      <% } else if (field.type === 'select') { %><select name="<%= field.name %>" <%= field.required ? 'required' : '' %>><option value="">Pilih <%= field.name === 'status' ? 'status' : 'kategori' %></option><% (options[field.name] || []).forEach((option) => { %><option value="<%= option.value %>" <%= String(value) === String(option.value) ? 'selected' : '' %>><%= option.label %></option><% }) %></select>
+      <% } else { %><input type="<%= field.type || 'text' %>" name="<%= field.name %>" value="<%= field.type === 'password' ? '' : value %>" <%= field.required && !(field.name === 'password' && record[config.key]) ? 'required' : '' %> <%= field.min !== undefined ? `min="${field.min}"` : '' %> <%= field.max !== undefined ? `max="${field.max}"` : '' %> placeholder="<%= field.placeholder || '' %>" <%= field.type === 'password' ? 'autocomplete="new-password"' : '' %>><% } %>
+      <% if (field.hint) { %><small class="field-hint"><%= field.hint %></small><% } %>
+    </label>
+  <% }) %>
+  <div class="form-actions"><a class="text-link" href="/admin/data/<%= config.table %>">Batal</a><button class="button button-dark" type="submit">Simpan perubahan <span aria-hidden="true">&#8594;</span></button></div>
+</form></section>
+<%- include('partials/shell-end') %>
