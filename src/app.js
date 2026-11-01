@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const ExcelJS = require('exceljs');
 const multer = require('multer');
 const { rateLimit } = require('express-rate-limit');
-const db = require('./db');
+const { db, initDatabase } = require('./db');
 const { detectColumnMap, readImportFile, valueAt } = require('./import-data');
 
 const app = express();
@@ -24,6 +24,32 @@ const uploadImportFile = multer({
     callback(null, true);
   }
 });
+
+async function execute(sql, args = [], client = db) {
+  return client.execute({ sql, args });
+}
+
+async function queryAll(sql, args = [], client = db) {
+  const result = await execute(sql, args, client);
+  return result.rows;
+}
+
+async function queryOne(sql, args = [], client = db) {
+  const result = await execute(sql, args, client);
+  return result.rows[0] || null;
+}
+
+async function withTransaction(callback) {
+  const transaction = await db.transaction('write');
+  try {
+    const result = await callback(transaction);
+    await transaction.commit();
+    return result;
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+}
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
@@ -98,7 +124,7 @@ adminRouter.get('/login', (req, res) => {
   res.render('login', { title: 'Masuk', error: '' });
 });
 
-function getPublicCatalog(query) {
+async function getPublicCatalog(query) {
   const search = String(query.q || '').trim().slice(0, 100);
   const categoryId = String(query.kategori || '').trim();
   const conditions = [];
@@ -112,26 +138,30 @@ function getPublicCatalog(query) {
     values.push(Number(categoryId));
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const books = db.prepare(`SELECT b.kode_buku, b.judul_buku, b.pengarang, b.penerbit,
+  const books = await queryAll(`SELECT b.kode_buku, b.judul_buku, b.pengarang, b.penerbit,
       b.tahun_terbit, b.isbn, b.jumlah_buku, k.nama_kategori
     FROM buku b JOIN kategori k ON k.kode_kategori = b.kode_kategori
-    ${where} ORDER BY b.judul_buku COLLATE NOCASE LIMIT 200`).all(...values);
+    ${where} ORDER BY b.judul_buku COLLATE NOCASE LIMIT 200`, values);
   return { books, search, categoryId };
 }
 
-app.get('/katalog', (req, res) => {
-  const { books, search, categoryId } = getPublicCatalog(req.query);
-  const categories = db.prepare('SELECT kode_kategori, nama_kategori FROM kategori ORDER BY nama_kategori COLLATE NOCASE').all();
+app.get('/katalog', async (req, res, next) => {
+  try {
+  const { books, search, categoryId } = await getPublicCatalog(req.query);
+  const categories = await queryAll('SELECT kode_kategori, nama_kategori FROM kategori ORDER BY nama_kategori COLLATE NOCASE');
   res.render('public-catalog', {
     title: 'Katalog Buku', books, categories, search, categoryId,
     user: null, csrfToken: '', currentPath: req.path, today: today()
   });
+  } catch (error) { next(error); }
 });
 
-app.get('/api/public/books', (req, res) => {
-  const { books } = getPublicCatalog(req.query);
+app.get('/api/public/books', async (req, res, next) => {
+  try {
+  const { books } = await getPublicCatalog(req.query);
   res.setHeader('Cache-Control', 'public, max-age=30');
   res.json(books);
+  } catch (error) { next(error); }
 });
 
 const loginLimiter = rateLimit({
@@ -142,10 +172,13 @@ const loginLimiter = rateLimit({
   message: 'Terlalu banyak percobaan masuk. Silakan coba kembali dalam 15 menit.'
 });
 
-adminRouter.post('/login', loginLimiter, (req, res, next) => {
+adminRouter.post('/login', loginLimiter, async (req, res, next) => {
   const identity = String(req.body.identity || '').trim();
   const password = String(req.body.password || '');
-  const staff = db.prepare('SELECT * FROM petugas WHERE username = ? OR email = ?').get(identity, identity);
+  let staff;
+  try {
+    staff = await queryOne('SELECT * FROM petugas WHERE username = ? OR email = ?', [identity, identity]);
+  } catch (error) { return next(error); }
   if (!staff || !bcrypt.compareSync(password, staff.password)) {
     return res.status(401).render('login', { title: 'Masuk', error: 'Username/email atau kata sandi tidak sesuai.' });
   }
@@ -169,27 +202,30 @@ adminRouter.post('/logout', (req, res, next) => {
   });
 });
 
-adminRouter.get('/dashboard', (req, res) => {
+adminRouter.get('/dashboard', async (req, res, next) => {
+  try {
   const day = today();
-  const statistics = {
-    books: db.prepare('SELECT COUNT(*) AS total FROM buku').get().total,
-    categories: db.prepare('SELECT COUNT(*) AS total FROM kategori').get().total,
-    members: db.prepare('SELECT COUNT(*) AS total FROM anggota').get().total,
-    activeLoans: db.prepare(`SELECT COALESCE(SUM(p.jumlah_buku - COALESCE(r.returned, 0)), 0) AS total
+  const activeLoans = await queryOne(`SELECT COALESCE(SUM(p.jumlah_buku - COALESCE(r.returned, 0)), 0) AS total
       FROM peminjaman p LEFT JOIN (SELECT kode_peminjaman, SUM(jumlah_buku) AS returned FROM pengembalian GROUP BY kode_peminjaman) r
-      ON r.kode_peminjaman = p.kode_peminjaman`).get().total,
-    loansToday: db.prepare('SELECT COUNT(*) AS total FROM peminjaman WHERE tanggal_peminjaman = ?').get(day).total,
-    returnsToday: db.prepare('SELECT COUNT(*) AS total FROM pengembalian WHERE tanggal_pengembalian = ?').get(day).total
+      ON r.kode_peminjaman = p.kode_peminjaman`);
+  const statistics = {
+    books: Number((await queryOne('SELECT COUNT(*) AS total FROM buku')).total),
+    categories: Number((await queryOne('SELECT COUNT(*) AS total FROM kategori')).total),
+    members: Number((await queryOne('SELECT COUNT(*) AS total FROM anggota')).total),
+    activeLoans: Number(activeLoans.total),
+    loansToday: Number((await queryOne('SELECT COUNT(*) AS total FROM peminjaman WHERE tanggal_peminjaman = ?', [day])).total),
+    returnsToday: Number((await queryOne('SELECT COUNT(*) AS total FROM pengembalian WHERE tanggal_pengembalian = ?', [day])).total)
   };
-  const recentLoans = db.prepare(`SELECT p.kode_peminjaman, p.tanggal_peminjaman, p.tanggal_jatuh_tempo,
+  const recentLoans = await queryAll(`SELECT p.kode_peminjaman, p.tanggal_peminjaman, p.tanggal_jatuh_tempo,
       a.nama AS nama_anggota, b.judul_buku,
       p.jumlah_buku - COALESCE(r.returned, 0) AS sisa_buku
     FROM peminjaman p JOIN anggota a ON a.kode_anggota = p.kode_anggota
     JOIN buku b ON b.kode_buku = p.kode_buku
     LEFT JOIN (SELECT kode_peminjaman, SUM(jumlah_buku) AS returned FROM pengembalian GROUP BY kode_peminjaman) r
       ON r.kode_peminjaman = p.kode_peminjaman
-    ORDER BY p.kode_peminjaman DESC LIMIT 6`).all();
+    ORDER BY p.kode_peminjaman DESC LIMIT 6`);
   res.render('dashboard', { title: 'Ringkasan', statistics, recentLoans });
+  } catch (error) { next(error); }
 });
 
 const resources = {
@@ -242,9 +278,9 @@ const resources = {
   }
 };
 
-function getOptions(type) {
+async function getOptions(type) {
   if (type === 'buku') {
-    return { kode_kategori: db.prepare('SELECT kode_kategori AS value, nama_kategori AS label FROM kategori ORDER BY nama_kategori').all() };
+    return { kode_kategori: await queryAll('SELECT kode_kategori AS value, nama_kategori AS label FROM kategori ORDER BY nama_kategori') };
   }
   if (type === 'anggota') {
     return { status: ['Aktif', 'Alumni', 'Keluar'].map((status) => ({ value: status, label: status })) };
@@ -300,8 +336,8 @@ adminRouter.post('/data/:type/import', importUpload, async (req, res) => {
     }
 
     const result = kind === 'anggota'
-      ? importMembers(rows, mapping, strategy)
-      : importBooks(rows, mapping, strategy);
+      ? await importMembers(rows, mapping, strategy)
+      : await importBooks(rows, mapping, strategy);
     let reviewId = '';
     if (result.invalid.length) {
       reviewId = crypto.randomUUID();
@@ -411,15 +447,11 @@ function addInvalid(result, rowNumber, data, mappedFields, reasons) {
   });
 }
 
-function importMembers(rows, mapping, strategy) {
-  const findByNis = db.prepare('SELECT kode_anggota, kelas, no_telp, alamat FROM anggota WHERE nis = ? COLLATE NOCASE LIMIT 1');
-  const insertMember = db.prepare(`INSERT INTO anggota (nis, nama, kelas, no_telp, alamat, status)
-    VALUES (?, ?, ?, ?, ?, 'Aktif')`);
-  const updateMember = db.prepare('UPDATE anggota SET nama = ?, kelas = ?, no_telp = ?, alamat = ? WHERE kode_anggota = ?');
+async function importMembers(rows, mapping, strategy) {
   const seen = new Set();
   const totals = { imported: 0, skipped: 0, updated: 0, invalid: [] };
 
-  const runImport = db.transaction(() => {
+  await withTransaction(async (transaction) => {
     for (const row of rows) {
       const { data, mappedFields } = rawImportData('anggota', row, mapping);
       const { nis, nama } = data;
@@ -435,41 +467,37 @@ function importMembers(rows, mapping, strategy) {
       const key = nis.toLocaleLowerCase();
       if (seen.has(key)) { addInvalid(totals, row.rowNumber, data, mappedFields, ['NIS duplikat di dalam file']); continue; }
       seen.add(key);
-      const existing = findByNis.get(nis);
+      const existing = await queryOne('SELECT kode_anggota, kelas, no_telp, alamat FROM anggota WHERE nis = ? COLLATE NOCASE LIMIT 1', [nis], transaction);
       if (existing) {
         if (strategy === 'skip') { addInvalid(totals, row.rowNumber, data, mappedFields, ['NIS sudah terdaftar di database']); continue; }
-        updateMember.run(
-          nama,
-          mappedFields.includes('kelas') ? data.kelas : existing.kelas,
-          mappedFields.includes('no_telp') ? data.no_telp : existing.no_telp,
-          mappedFields.includes('alamat') ? data.alamat : existing.alamat,
-          existing.kode_anggota
+        await execute(
+          'UPDATE anggota SET nama = ?, kelas = ?, no_telp = ?, alamat = ? WHERE kode_anggota = ?',
+          [
+            nama,
+            mappedFields.includes('kelas') ? data.kelas : existing.kelas,
+            mappedFields.includes('no_telp') ? data.no_telp : existing.no_telp,
+            mappedFields.includes('alamat') ? data.alamat : existing.alamat,
+            existing.kode_anggota
+          ],
+          transaction
         );
         totals.imported += 1;
         totals.updated += 1;
         continue;
       }
-      insertMember.run(nis, nama, data.kelas, data.no_telp, data.alamat);
+      await execute(`INSERT INTO anggota (nis, nama, kelas, no_telp, alamat, status)
+        VALUES (?, ?, ?, ?, ?, 'Aktif')`, [nis, nama, data.kelas, data.no_telp, data.alamat], transaction);
       totals.imported += 1;
     }
   });
-  runImport();
   return totals;
 }
 
-function importBooks(rows, mapping, strategy) {
-  const findByCode = db.prepare('SELECT kode_buku FROM buku WHERE kode_buku = ?');
-  const getCategory = db.prepare('SELECT kode_kategori FROM kategori WHERE nama_kategori = ? COLLATE NOCASE');
-  const insertCategory = db.prepare('INSERT INTO kategori (nama_kategori) VALUES (?)');
-  const insertBook = db.prepare(`INSERT INTO buku
-    (kode_buku, judul_buku, pengarang, penerbit, tahun_terbit, jumlah_buku, isbn, kode_kategori)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-  const updateBook = db.prepare(`UPDATE buku SET judul_buku = ?, pengarang = ?, penerbit = ?,
-    tahun_terbit = ?, jumlah_buku = ?, isbn = ?, kode_kategori = ? WHERE kode_buku = ?`);
+async function importBooks(rows, mapping, strategy) {
   const seen = new Set();
   const totals = { imported: 0, skipped: 0, updated: 0, invalid: [] };
 
-  const runImport = db.transaction(() => {
+  await withTransaction(async (transaction) => {
     for (const row of rows) {
       const { data, mappedFields } = rawImportData('buku', row, mapping);
       const { kode_buku: kode, judul_buku: judul } = data;
@@ -493,22 +521,23 @@ function importBooks(rows, mapping, strategy) {
       if (seen.has(key)) { addInvalid(totals, row.rowNumber, data, mappedFields, ['Kode buku duplikat di dalam file']); continue; }
       seen.add(key);
 
-      const existing = findByCode.get(kode);
+      const existing = await queryOne('SELECT kode_buku FROM buku WHERE kode_buku = ?', [kode], transaction);
       if (existing && strategy === 'skip') { addInvalid(totals, row.rowNumber, data, mappedFields, ['Kode buku sudah terdaftar di database']); continue; }
       const sourceCategory = data.kategori;
       if (existing) {
-        const current = db.prepare('SELECT tahun_terbit, jumlah_buku, pengarang, penerbit, isbn, kode_kategori FROM buku WHERE kode_buku = ?').get(kode);
+        const current = await queryOne('SELECT tahun_terbit, jumlah_buku, pengarang, penerbit, isbn, kode_kategori FROM buku WHERE kode_buku = ?', [kode], transaction);
         const categoryName = sourceCategory;
         let categoryId = current.kode_kategori;
         if (categoryName) {
-          let category = getCategory.get(categoryName);
+          let category = await queryOne('SELECT kode_kategori FROM kategori WHERE nama_kategori = ? COLLATE NOCASE', [categoryName], transaction);
           if (!category) {
-            const inserted = insertCategory.run(categoryName.slice(0, 100));
+            const inserted = await execute('INSERT INTO kategori (nama_kategori) VALUES (?)', [categoryName.slice(0, 100)], transaction);
             category = { kode_kategori: inserted.lastInsertRowid };
           }
           categoryId = category.kode_kategori;
         }
-        updateBook.run(
+        await execute(`UPDATE buku SET judul_buku = ?, pengarang = ?, penerbit = ?,
+          tahun_terbit = ?, jumlah_buku = ?, isbn = ?, kode_kategori = ? WHERE kode_buku = ?`, [
           judul,
           mappedFields.includes('pengarang') ? data.pengarang : current.pengarang,
           mappedFields.includes('penerbit') ? data.penerbit : current.penerbit,
@@ -517,41 +546,44 @@ function importBooks(rows, mapping, strategy) {
           mappedFields.includes('isbn') ? data.isbn : current.isbn,
           categoryId,
           kode
-        );
+        ], transaction);
         totals.imported += 1;
         totals.updated += 1;
       } else {
         const categoryName = sourceCategory || 'Umum';
-        let category = getCategory.get(categoryName);
+        let category = await queryOne('SELECT kode_kategori FROM kategori WHERE nama_kategori = ? COLLATE NOCASE', [categoryName], transaction);
         if (!category) {
-          const inserted = insertCategory.run(categoryName.slice(0, 100));
+          const inserted = await execute('INSERT INTO kategori (nama_kategori) VALUES (?)', [categoryName.slice(0, 100)], transaction);
           category = { kode_kategori: inserted.lastInsertRowid };
         }
-        insertBook.run(
+        await execute(`INSERT INTO buku
+          (kode_buku, judul_buku, pengarang, penerbit, tahun_terbit, jumlah_buku, isbn, kode_kategori)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [
           kode, judul, data.pengarang, data.penerbit,
           year, quantity, data.isbn, category.kode_kategori
-        );
+        ], transaction);
         totals.imported += 1;
       }
     }
   });
-  runImport();
   return totals;
 }
 
-adminRouter.get('/data/anggota/bulk-class', (req, res) => {
-  const classes = db.prepare("SELECT DISTINCT kelas FROM anggota WHERE status = 'Aktif' ORDER BY kelas").all().map((row) => row.kelas);
+adminRouter.get('/data/anggota/bulk-class', async (req, res, next) => {
+  try {
+  const classes = (await queryAll("SELECT DISTINCT kelas FROM anggota WHERE status = 'Aktif' ORDER BY kelas")).map((row) => row.kelas);
   const sourceClass = String(req.query.kelas_asal || '');
   const members = sourceClass
-    ? db.prepare("SELECT kode_anggota, nis, nama, kelas, status FROM anggota WHERE kelas = ? AND status = 'Aktif' ORDER BY nama").all(sourceClass)
+    ? await queryAll("SELECT kode_anggota, nis, nama, kelas, status FROM anggota WHERE kelas = ? AND status = 'Aktif' ORDER BY nama", [sourceClass])
     : [];
   res.render('member-bulk-class', {
     title: 'Perbarui Kelas', classes, sourceClass, members,
     notice: req.query.success || '', error: req.query.error || ''
   });
+  } catch (error) { next(error); }
 });
 
-adminRouter.post('/data/anggota/bulk-class', (req, res) => {
+adminRouter.post('/data/anggota/bulk-class', async (req, res, next) => {
   const sourceClass = String(req.body.kelas_asal || '').trim();
   const targetClass = String(req.body.kelas_tujuan || '').trim();
   if (!sourceClass || !targetClass) {
@@ -560,12 +592,13 @@ adminRouter.post('/data/anggota/bulk-class', (req, res) => {
   if (sourceClass === targetClass) {
     return redirectNotice(res, `/data/anggota/bulk-class?kelas_asal=${encodeURIComponent(sourceClass)}`, 'Kelas tujuan harus berbeda dari kelas asal.', 'error');
   }
-  const updateClass = db.transaction(() => db.prepare("UPDATE anggota SET kelas = ? WHERE kelas = ? AND status = 'Aktif'").run(targetClass, sourceClass));
-  const result = updateClass();
-  if (!result.changes) {
+  try {
+  const result = await execute("UPDATE anggota SET kelas = ? WHERE kelas = ? AND status = 'Aktif'", [targetClass, sourceClass]);
+  if (!result.rowsAffected) {
     return redirectNotice(res, `/data/anggota/bulk-class?kelas_asal=${encodeURIComponent(sourceClass)}`, 'Tidak ada anggota pada kelas asal tersebut.', 'error');
   }
-  return redirectNotice(res, '/data/anggota', `${result.changes} anggota berhasil dipindahkan dari ${sourceClass} ke ${targetClass}.`);
+  return redirectNotice(res, '/data/anggota', `${result.rowsAffected} anggota berhasil dipindahkan dari ${sourceClass} ke ${targetClass}.`);
+  } catch (error) { next(error); }
 });
 
 function getResource(req, res) {
@@ -577,17 +610,18 @@ function getResource(req, res) {
   return config;
 }
 
-adminRouter.get('/data/:type', (req, res) => {
+adminRouter.get('/data/:type', async (req, res, next) => {
+  try {
   const config = getResource(req, res);
   if (!config) return;
   const search = String(req.query.q || '').trim();
-  const rows = getResourceRows(config, req.query);
+  const rows = await getResourceRows(config, req.query);
   const review = config.table === 'anggota' || config.table === 'buku'
     ? getImportReview(req, req.params.type, String(req.query.review || ''))
     : null;
   res.render('data-list', {
     title: config.title, config, rows, search,
-    filters: getResourceFilterOptions(req.params.type),
+    filters: await getResourceFilterOptions(req.params.type),
     activeFilters: req.query,
     notice: req.query.success || '', error: req.query.error || '',
     importError: req.query.importError || '',
@@ -599,13 +633,14 @@ adminRouter.get('/data/:type', (req, res) => {
     importReview: review,
     reviewNotice: req.query.reviewNotice || ''
   });
+  } catch (error) { next(error); }
 });
 
 adminRouter.get('/data/:type/export', async (req, res, next) => {
   const config = getResource(req, res);
   if (!config) return;
   try {
-    const rows = getResourceRows(config, req.query);
+    const rows = await getResourceRows(config, req.query);
     const columns = config.columns.map((column) => ({ header: column.label, key: column.name, width: Math.min(Math.max(column.label.length + 4, 16), 34) }));
     const workbook = createWorkbook(config.title, columns, rows);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -617,13 +652,14 @@ adminRouter.get('/data/:type/export', async (req, res, next) => {
   }
 });
 
-adminRouter.get('/api/lookup/:type', (req, res) => {
+adminRouter.get('/api/lookup/:type', async (req, res, next) => {
+  try {
   const search = String(req.query.q || '').trim().slice(0, 80);
   if (search.length < 1) return res.json([]);
   const pattern = `%${search}%`;
   if (req.params.type === 'anggota') {
-    const results = db.prepare(`SELECT kode_anggota AS id, nis, nama, kelas
-      FROM anggota WHERE status = 'Aktif' AND (nama LIKE ? OR nis LIKE ? OR kelas LIKE ?) ORDER BY nama LIMIT 12`).all(pattern, pattern, pattern);
+    const results = await queryAll(`SELECT kode_anggota AS id, nis, nama, kelas
+      FROM anggota WHERE status = 'Aktif' AND (nama LIKE ? OR nis LIKE ? OR kelas LIKE ?) ORDER BY nama LIMIT 12`, [pattern, pattern, pattern]);
     return res.json(results.map((member) => ({
       id: member.id,
       label: member.nama,
@@ -631,10 +667,10 @@ adminRouter.get('/api/lookup/:type', (req, res) => {
     })));
   }
   if (req.params.type === 'buku') {
-    const results = db.prepare(`SELECT b.kode_buku AS id, b.judul_buku, b.pengarang, b.jumlah_buku, k.nama_kategori
+    const results = await queryAll(`SELECT b.kode_buku AS id, b.judul_buku, b.pengarang, b.jumlah_buku, k.nama_kategori
       FROM buku b JOIN kategori k ON k.kode_kategori = b.kode_kategori
       WHERE b.jumlah_buku > 0 AND (b.judul_buku LIKE ? OR b.kode_buku LIKE ? OR b.pengarang LIKE ? OR b.isbn LIKE ?)
-      ORDER BY b.judul_buku LIMIT 12`).all(pattern, pattern, pattern, pattern);
+      ORDER BY b.judul_buku LIMIT 12`, [pattern, pattern, pattern, pattern]);
     return res.json(results.map((book) => ({
       id: book.id,
       label: book.judul_buku,
@@ -642,9 +678,10 @@ adminRouter.get('/api/lookup/:type', (req, res) => {
     })));
   }
   return res.status(404).json({ error: 'Jenis pencarian tidak tersedia.' });
+  } catch (error) { next(error); }
 });
 
-function getResourceRows(config, query) {
+async function getResourceRows(config, query) {
   const conditions = [];
   const values = [];
   const search = String(query.q || '').trim();
@@ -660,18 +697,18 @@ function getResourceRows(config, query) {
     values.push(value);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  return db.prepare(`SELECT ${config.select || '*'} FROM ${config.table} ${config.joins || ''} ${where} ORDER BY ${config.key} DESC`).all(...values);
+  return queryAll(`SELECT ${config.select || '*'} FROM ${config.table} ${config.joins || ''} ${where} ORDER BY ${config.key} DESC`, values);
 }
 
-function getResourceFilterOptions(type) {
+async function getResourceFilterOptions(type) {
   if (type === 'anggota') {
     return {
-      kelas: db.prepare('SELECT DISTINCT kelas AS value, kelas AS label FROM anggota WHERE kelas != ? ORDER BY kelas').all(''),
+      kelas: await queryAll('SELECT DISTINCT kelas AS value, kelas AS label FROM anggota WHERE kelas != ? ORDER BY kelas', ['']),
       status: ['Aktif', 'Alumni', 'Keluar'].map((status) => ({ value: status, label: status }))
     };
   }
   if (type === 'buku') {
-    return { kode_kategori: db.prepare('SELECT kode_kategori AS value, nama_kategori AS label FROM kategori ORDER BY nama_kategori').all() };
+    return { kode_kategori: await queryAll('SELECT kode_kategori AS value, nama_kategori AS label FROM kategori ORDER BY nama_kategori') };
   }
   return {};
 }
@@ -705,21 +742,25 @@ function columnLetter(column) {
   return result;
 }
 
-adminRouter.get('/data/:type/new', (req, res) => {
+adminRouter.get('/data/:type/new', async (req, res, next) => {
+  try {
   const config = getResource(req, res);
   if (!config) return;
-  res.render('data-form', { title: `Tambah ${config.singular}`, config, record: {}, options: getOptions(req.params.type), error: '' });
+  res.render('data-form', { title: `Tambah ${config.singular}`, config, record: {}, options: await getOptions(req.params.type), error: '' });
+  } catch (error) { next(error); }
 });
 
-adminRouter.get('/data/:type/:id/edit', (req, res) => {
+adminRouter.get('/data/:type/:id/edit', async (req, res, next) => {
+  try {
   const config = getResource(req, res);
   if (!config) return;
-  const record = db.prepare(`SELECT * FROM ${config.table} WHERE ${config.key} = ?`).get(req.params.id);
+  const record = await queryOne(`SELECT * FROM ${config.table} WHERE ${config.key} = ?`, [req.params.id]);
   if (!record) return res.status(404).render('error', { title: 'Data tidak ditemukan', message: 'Data yang akan diedit tidak tersedia.' });
-  res.render('data-form', { title: `Edit ${config.singular}`, config, record, options: getOptions(req.params.type), error: '' });
+  res.render('data-form', { title: `Edit ${config.singular}`, config, record, options: await getOptions(req.params.type), error: '' });
+  } catch (error) { next(error); }
 });
 
-adminRouter.post('/data/:type/save', (req, res) => {
+adminRouter.post('/data/:type/save', async (req, res, next) => {
   const config = getResource(req, res);
   if (!config) return;
   const id = String(req.body.id || '').trim();
@@ -756,46 +797,46 @@ adminRouter.post('/data/:type/save', (req, res) => {
     values[field.name] = value;
   }
 
-  const renderForm = (message) => {
+  const renderForm = async (message) => {
     const record = { ...req.body };
     delete record.password;
-    res.status(400).render('data-form', { title: `${isEdit ? 'Edit' : 'Tambah'} ${config.singular}`, config, record, options: getOptions(req.params.type), error: message });
+    res.status(400).render('data-form', { title: `${isEdit ? 'Edit' : 'Tambah'} ${config.singular}`, config, record, options: await getOptions(req.params.type), error: message });
   };
-  if (error) return renderForm(error);
+  if (error) return await renderForm(error);
 
   try {
     const fields = Object.keys(values);
     if (isEdit) {
       if (fields.length) {
         const assignments = fields.map((field) => `${field} = ?`).join(', ');
-        db.prepare(`UPDATE ${config.table} SET ${assignments} WHERE ${config.key} = ?`).run(...fields.map((field) => values[field]), id);
+        await execute(`UPDATE ${config.table} SET ${assignments} WHERE ${config.key} = ?`, [...fields.map((field) => values[field]), id]);
       }
     } else {
       const placeholders = fields.map(() => '?').join(', ');
-      db.prepare(`INSERT INTO ${config.table} (${fields.join(', ')}) VALUES (${placeholders})`).run(...fields.map((field) => values[field]));
+      await execute(`INSERT INTO ${config.table} (${fields.join(', ')}) VALUES (${placeholders})`, fields.map((field) => values[field]));
     }
     redirectNotice(res, `/data/${req.params.type}`, `Data ${config.singular} berhasil ${isEdit ? 'diperbarui' : 'ditambahkan'}.`);
   } catch (caught) {
-    const message = caught.code === 'SQLITE_CONSTRAINT_UNIQUE'
+    const message = String(caught.code || '').includes('CONSTRAINT_UNIQUE')
       ? 'Kode, username, email, atau nama kategori tersebut sudah digunakan.'
-      : caught.code === 'SQLITE_CONSTRAINT_FOREIGNKEY'
+      : String(caught.code || '').includes('CONSTRAINT_FOREIGNKEY')
         ? 'Kategori tidak tersedia atau data masih digunakan oleh transaksi.'
         : 'Data tidak dapat disimpan. Periksa kembali isian Anda.';
-    renderForm(message);
+    await renderForm(message);
   }
 });
 
-adminRouter.post('/data/:type/:id/delete', (req, res) => {
+adminRouter.post('/data/:type/:id/delete', async (req, res, next) => {
   const config = getResource(req, res);
   if (!config) return;
   if (req.params.type === 'petugas' && Number(req.params.id) === req.session.user.id) {
     return redirectNotice(res, `/data/${req.params.type}`, 'Akun yang sedang digunakan tidak dapat dihapus.', 'error');
   }
   try {
-    db.prepare(`DELETE FROM ${config.table} WHERE ${config.key} = ?`).run(req.params.id);
+    await execute(`DELETE FROM ${config.table} WHERE ${config.key} = ?`, [req.params.id]);
     redirectNotice(res, `/data/${req.params.type}`, `Data ${config.singular} berhasil dihapus.`);
   } catch (caught) {
-    const message = caught.code === 'SQLITE_CONSTRAINT_FOREIGNKEY'
+    const message = String(caught.code || '').includes('CONSTRAINT_FOREIGNKEY')
       ? 'Data tidak dapat dihapus karena masih terhubung dengan transaksi atau koleksi.'
       : 'Data tidak dapat dihapus.';
     redirectNotice(res, `/data/${req.params.type}`, message, 'error');
@@ -811,7 +852,7 @@ const loanQuery = `SELECT p.kode_peminjaman, p.kode_buku, p.kode_anggota, p.tang
   LEFT JOIN (SELECT kode_peminjaman, SUM(jumlah_buku) AS returned FROM pengembalian GROUP BY kode_peminjaman) r
     ON r.kode_peminjaman = p.kode_peminjaman`;
 
-function getFilteredLoans(query) {
+async function getFilteredLoans(query) {
   const conditions = [];
   const values = [];
   const startDate = String(query.mulai || '').trim();
@@ -831,7 +872,7 @@ function getFilteredLoans(query) {
   if (status === 'dikembalikan') conditions.push('(p.jumlah_buku - COALESCE(r.returned, 0) = 0)');
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  return db.prepare(`${loanQuery} ${where} ORDER BY p.kode_peminjaman DESC`).all(...values);
+  return queryAll(`${loanQuery} ${where} ORDER BY p.kode_peminjaman DESC`, values);
 }
 
 function loanStatus(loan) {
@@ -842,7 +883,7 @@ function loanStatus(loan) {
 
 adminRouter.get('/transactions/export', async (req, res, next) => {
   try {
-    const loans = getFilteredLoans(req.query);
+    const loans = await getFilteredLoans(req.query);
     const rows = loans.map((loan) => ({
       kode_peminjaman: loan.kode_peminjaman,
       nama_anggota: loan.nama_anggota,
@@ -879,19 +920,21 @@ adminRouter.get('/transactions/export', async (req, res, next) => {
   }
 });
 
-adminRouter.get('/transactions', (req, res) => {
-  const loans = getFilteredLoans(req.query);
-  const hasMembers = db.prepare('SELECT EXISTS(SELECT 1 FROM anggota) AS found').get().found;
-  const hasBooks = db.prepare('SELECT EXISTS(SELECT 1 FROM buku WHERE jumlah_buku > 0) AS found').get().found;
+adminRouter.get('/transactions', async (req, res, next) => {
+  try {
+  const loans = await getFilteredLoans(req.query);
+  const hasMembers = Boolean((await queryOne('SELECT EXISTS(SELECT 1 FROM anggota) AS found')).found);
+  const hasBooks = Boolean((await queryOne('SELECT EXISTS(SELECT 1 FROM buku WHERE jumlah_buku > 0) AS found')).found);
   res.render('transactions', {
     title: 'Transaksi', loans, hasMembers, hasBooks,
     activeFilters: req.query,
     notice: req.query.success || '', error: req.query.error || '',
     currentDate: today(), dueDate: addDays(today(), 3)
   });
+  } catch (error) { next(error); }
 });
 
-adminRouter.post('/transactions/borrow', (req, res) => {
+adminRouter.post('/transactions/borrow', async (req, res) => {
   const memberId = Number(req.body.kode_anggota);
   const bookId = String(req.body.kode_buku || '').trim();
   const quantity = Number(req.body.jumlah_buku);
@@ -899,46 +942,45 @@ adminRouter.post('/transactions/borrow', (req, res) => {
   if (!Number.isInteger(memberId) || !bookId || !Number.isInteger(quantity) || quantity < 1) return fail('Pilih anggota, buku, dan jumlah pinjaman yang valid.');
 
   try {
-    const borrow = db.transaction(() => {
-      const member = db.prepare('SELECT kode_anggota, nama, status FROM anggota WHERE kode_anggota = ?').get(memberId);
-      const book = db.prepare('SELECT kode_buku, jumlah_buku FROM buku WHERE kode_buku = ?').get(bookId);
+    await withTransaction(async (transaction) => {
+      const member = await queryOne('SELECT kode_anggota, nama, status FROM anggota WHERE kode_anggota = ?', [memberId], transaction);
+      const book = await queryOne('SELECT kode_buku, jumlah_buku FROM buku WHERE kode_buku = ?', [bookId], transaction);
       if (!member) throw new Error('Anggota tidak ditemukan.');
       if (member.status !== 'Aktif') throw new Error(`Peminjaman ditolak: status anggota ${member.nama} adalah ${member.status}.`);
       if (!book) throw new Error('Buku tidak ditemukan.');
       if (book.jumlah_buku < quantity) throw new Error('Stok buku tidak mencukupi.');
-      const active = db.prepare(`SELECT COALESCE(SUM(p.jumlah_buku - COALESCE(r.returned, 0)), 0) AS total
+      const activeResult = await queryOne(`SELECT COALESCE(SUM(p.jumlah_buku - COALESCE(r.returned, 0)), 0) AS total
         FROM peminjaman p LEFT JOIN (SELECT kode_peminjaman, SUM(jumlah_buku) AS returned FROM pengembalian GROUP BY kode_peminjaman) r
-          ON r.kode_peminjaman = p.kode_peminjaman WHERE p.kode_anggota = ?`).get(memberId).total;
+          ON r.kode_peminjaman = p.kode_peminjaman WHERE p.kode_anggota = ?`, [memberId], transaction);
+      const active = Number(activeResult.total);
       if (active + quantity > 3) throw new Error(`Anggota masih memiliki ${active} buku. Batas aktif adalah 3 buku.`);
       const date = today();
-      db.prepare('UPDATE buku SET jumlah_buku = jumlah_buku - ? WHERE kode_buku = ?').run(quantity, bookId);
-      db.prepare(`INSERT INTO peminjaman (kode_petugas, kode_buku, kode_anggota, tanggal_peminjaman, tanggal_jatuh_tempo, jumlah_buku)
-        VALUES (?, ?, ?, ?, ?, ?)`).run(req.session.user.id, bookId, memberId, date, addDays(date, 3), quantity);
+      await execute('UPDATE buku SET jumlah_buku = jumlah_buku - ? WHERE kode_buku = ?', [quantity, bookId], transaction);
+      await execute(`INSERT INTO peminjaman (kode_petugas, kode_buku, kode_anggota, tanggal_peminjaman, tanggal_jatuh_tempo, jumlah_buku)
+        VALUES (?, ?, ?, ?, ?, ?)`, [req.session.user.id, bookId, memberId, date, addDays(date, 3), quantity], transaction);
     });
-    borrow();
     return redirectNotice(res, '/transactions', 'Peminjaman berhasil dicatat. Batas pengembalian 3 hari.');
   } catch (caught) {
     return fail(caught.message || 'Peminjaman tidak dapat diproses.');
   }
 });
 
-adminRouter.post('/transactions/:id/return', (req, res) => {
+adminRouter.post('/transactions/:id/return', async (req, res) => {
   const loanId = Number(req.params.id);
   const quantity = Number(req.body.jumlah_buku);
   const fail = (message) => redirectNotice(res, '/transactions', message, 'error');
   if (!Number.isInteger(loanId) || !Number.isInteger(quantity) || quantity < 1) return fail('Jumlah pengembalian tidak valid.');
 
   try {
-    const returnBooks = db.transaction(() => {
-      const loan = db.prepare(`${loanQuery} WHERE p.kode_peminjaman = ?`).get(loanId);
+    await withTransaction(async (transaction) => {
+      const loan = await queryOne(`${loanQuery} WHERE p.kode_peminjaman = ?`, [loanId], transaction);
       if (!loan) throw new Error('Transaksi peminjaman tidak ditemukan.');
-      if (quantity > loan.sisa_buku) throw new Error(`Jumlah pengembalian melebihi sisa pinjaman (${loan.sisa_buku}).`);
-      db.prepare(`INSERT INTO pengembalian
+      if (quantity > Number(loan.sisa_buku)) throw new Error(`Jumlah pengembalian melebihi sisa pinjaman (${loan.sisa_buku}).`);
+      await execute(`INSERT INTO pengembalian
         (kode_petugas, kode_buku, kode_anggota, kode_peminjaman, tanggal_pengembalian, jumlah_buku)
-        VALUES (?, ?, ?, ?, ?, ?)`).run(req.session.user.id, loan.kode_buku, loan.kode_anggota, loanId, today(), quantity);
-      db.prepare('UPDATE buku SET jumlah_buku = jumlah_buku + ? WHERE kode_buku = (SELECT kode_buku FROM peminjaman WHERE kode_peminjaman = ?)').run(quantity, loanId);
+        VALUES (?, ?, ?, ?, ?, ?)`, [req.session.user.id, loan.kode_buku, loan.kode_anggota, loanId, today(), quantity], transaction);
+      await execute('UPDATE buku SET jumlah_buku = jumlah_buku + ? WHERE kode_buku = (SELECT kode_buku FROM peminjaman WHERE kode_peminjaman = ?)', [quantity, loanId], transaction);
     });
-    returnBooks();
     return redirectNotice(res, '/transactions', 'Pengembalian berhasil dicatat dan stok diperbarui.');
   } catch (caught) {
     return fail(caught.message || 'Pengembalian tidak dapat diproses.');
@@ -954,4 +996,9 @@ app.use((error, req, res, next) => {
   res.status(500).render('error', { title: 'Terjadi kesalahan', message: 'Permintaan belum dapat diproses. Silakan coba kembali.' });
 });
 
-app.listen(port, () => console.log(`Perpustakaan berjalan di http://localhost:${port}`));
+initDatabase()
+  .then(() => app.listen(port, () => console.log(`Perpustakaan berjalan di http://localhost:${port}`)))
+  .catch((error) => {
+    console.error('Gagal menginisialisasi database Turso:', error);
+    process.exitCode = 1;
+  });

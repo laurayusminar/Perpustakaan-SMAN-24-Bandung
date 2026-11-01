@@ -4,44 +4,36 @@ const { createClient } = require('@libsql/client');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
-// Inisialisasi client Turso (libsql) atau fallback ke SQLite lokal jika offline
+if (!process.env.TURSO_DATABASE_URL) {
+  throw new Error('TURSO_DATABASE_URL wajib diatur untuk koneksi database Turso.');
+}
+
 const db = createClient({
-  url: process.env.TURSO_DATABASE_URL || `file:${path.join(__dirname, '..', 'database', 'perpustakaan.sqlite')}`,
+  url: process.env.TURSO_DATABASE_URL,
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-// Fungsi untuk menjalankan migrasi schema dan seeding secara asinkronus
 async function initDatabase() {
   const dataDirectory = path.join(__dirname, '..', 'database');
-  
-  // Baca schema.sql
   const schemaPath = path.join(dataDirectory, 'schema.sql');
-  if (fs.existsSync(schemaPath)) {
-    const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-    // Jalankan perintah schema per baris/blok ke Turso
-    for (const statement of schemaSql.split(';')) {
-      if (statement.trim()) {
-        await db.execute(statement);
-      }
-    }
+  const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+  for (const statement of schemaSql.split(';').map((part) => part.trim()).filter(Boolean)) {
+    await db.execute(statement);
   }
 
-  // Cek kolom tambahan pada tabel anggota
   try {
     const anggotaInfo = await db.execute("PRAGMA table_info(anggota)");
-    const columns = anggotaInfo.rows.map(row => row.name);
-    
+    const columns = anggotaInfo.rows.map((row) => row.name);
     if (!columns.includes('nis')) {
       await db.execute("ALTER TABLE anggota ADD COLUMN nis TEXT NOT NULL DEFAULT ''");
     }
     if (!columns.includes('status')) {
       await db.execute("ALTER TABLE anggota ADD COLUMN status TEXT NOT NULL DEFAULT 'Aktif'");
     }
-  } catch (e) {
-    console.log("Catatan migrasi kolom:", e.message);
+  } catch (error) {
+    console.log('Catatan migrasi kolom:', error.message);
   }
 
-  // Seeding: Petugas
   const staffRes = await db.execute('SELECT COUNT(*) AS total FROM petugas');
   const staffCount = Number(staffRes.rows[0].total);
   if (staffCount === 0) {
@@ -58,7 +50,6 @@ async function initDatabase() {
     });
   }
 
-  // Seeding: Kategori
   const catRes = await db.execute('SELECT COUNT(*) AS total FROM kategori');
   if (Number(catRes.rows[0].total) === 0) {
     const categories = ['Fiksi', 'Ilmu Pengetahuan', 'Sejarah', 'Referensi'];
@@ -70,7 +61,6 @@ async function initDatabase() {
     }
   }
 
-  // Seeding: Buku Dummy
   const bookRes = await db.execute('SELECT COUNT(*) AS total FROM buku');
   if (Number(bookRes.rows[0].total) === 0) {
     const catList = await db.execute('SELECT kode_kategori, nama_kategori FROM kategori');
@@ -94,7 +84,4 @@ async function initDatabase() {
   }
 }
 
-// Jalankan inisialisasi database
-initDatabase().catch(err => console.error("Gagal menginisialisasi database:", err));
-
-module.exports = db;
+module.exports = { db, initDatabase };
